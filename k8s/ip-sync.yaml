@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: stunner-ip-sync
+  namespace: stunner
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: stunner-ip-sync-node-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: stunner-ip-sync-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: stunner-ip-sync
+    namespace: stunner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: stunner-ip-sync-node-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: stunner-ip-sync
+  namespace: stunner
+rules:
+  # resourceNames must match STATIC_SERVICE_NAME and GATEWAY_NAME
+  - apiGroups: ["stunner.l7mp.io"]
+    resources: ["staticservices"]
+    resourceNames: ["livekit-public"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    resourceNames: ["udp-gateway"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: stunner-ip-sync
+  namespace: stunner
+subjects:
+  - kind: ServiceAccount
+    name: stunner-ip-sync
+    namespace: stunner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: stunner-ip-sync
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stunner-ip-sync-config
+  namespace: stunner
+data:
+  STATIC_SERVICE_NAMESPACE: "stunner"
+  STATIC_SERVICE_NAME: "livekit-public"
+  NODE_SELECTOR: "livekit-dedicated=true"
+  GATEWAY_NAMESPACE: "stunner"
+  GATEWAY_NAME: "udp-gateway"
+  NUDGE_ENABLED: "true"
+  NUDGE_ANNOTATION: "ip-sync.internal/hash"
+  NUDGE_SETTLE_SECONDS: "2"
+  ADDRESS_TYPES: "ExternalIP"
+  SYNC_INTERVAL_SECONDS: "30"
+  HEARTBEAT_SECONDS: "300"
+  MAX_CONSECUTIVE_FAILURES: "0"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stunner-ip-sync
+  namespace: stunner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stunner-ip-sync
+  template:
+    metadata:
+      labels:
+        app: stunner-ip-sync
+      annotations:
+        # restart the pod when the ConfigMap changes (or use Reloader)
+        reloader.stakater.com/auto: "true"
+    spec:
+      serviceAccountName: stunner-ip-sync
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ip-sync
+          image: <registry>/stunner-ip-sync@sha256:<digest>
+          envFrom:
+            - configMapRef:
+                name: stunner-ip-sync-config
+          resources:
+            requests: { cpu: 10m, memory: 48Mi }
+            limits: { memory: 96Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
