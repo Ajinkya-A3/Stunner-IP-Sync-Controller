@@ -1,0 +1,79 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: stunner-gatewayclass
+spec:
+  controllerName: "stunner.l7mp.io/gateway-operator"
+  parametersRef:
+    group: "stunner.l7mp.io"
+    kind: GatewayConfig
+    name: stunner-gatewayconfig
+    namespace: stunner
+---
+apiVersion: stunner.l7mp.io/v1
+kind: GatewayConfig
+metadata:
+  name: stunner-gatewayconfig
+  namespace: stunner
+spec:
+  realm: stunner.l7mp.io
+  authRef:
+    name: stunner-auth-secret
+    namespace: stunner
+  # Optional: AWS NLB settings for the generated LoadBalancer Service.
+  # UDP cannot be health-checked, so NLBs need a TCP/HTTP check on the dataplane
+  # health port. Adjust to your load balancer controller before enabling.
+  # loadBalancerServiceAnnotations:
+  #   service.beta.kubernetes.io/aws-load-balancer-type: "external"
+  #   service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "instance"
+  #   service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+  #   service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "8086"
+  #   service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "http"
+  #   service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/live"
+---
+# Ephemeral (HMAC) credentials. Create this out of band (Vault + ESO) instead of
+# committing it. Keep the secret short and alphanumeric: a long secret with
+# special characters has been reported to break ephemeral auth.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: stunner-auth-secret
+  namespace: stunner
+type: Opaque
+stringData:
+  type: ephemeral
+  secret: CHANGE_ME_SHARED_SECRET
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: udp-gateway          # must match GATEWAY_NAME
+  namespace: stunner
+spec:
+  gatewayClassName: stunner-gatewayclass
+  listeners:
+    - name: udp-listener
+      port: 3478
+      protocol: TURN-UDP     # use UDP if your installed operator version predates TURN-* protocols
+---
+apiVersion: stunner.l7mp.io/v1
+kind: StaticService
+metadata:
+  name: livekit-public       # must match STATIC_SERVICE_NAME
+  namespace: stunner
+spec:
+  prefixes: []    # populated by IP sync controller
+---
+apiVersion: stunner.l7mp.io/v1
+kind: UDPRoute
+metadata:
+  name: livekit
+  namespace: stunner
+spec:
+  parentRefs:
+    - name: udp-gateway
+  rules:
+    - backendRefs:
+        - group: stunner.l7mp.io
+          kind: StaticService
+          name: livekit-public
