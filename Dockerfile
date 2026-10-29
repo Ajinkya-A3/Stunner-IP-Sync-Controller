@@ -4,7 +4,7 @@ ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 
 COPY requirements.txt .
-RUN pip install --require-hashes --no-deps --target /app/deps -r requirements.txt
+RUN pip install --no-deps --target /app/deps -r requirements.txt
 
 COPY controller.py /app/controller.py
 # precompile: the runtime FS is read-only and PYTHONDONTWRITEBYTECODE=1
